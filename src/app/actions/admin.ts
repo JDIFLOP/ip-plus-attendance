@@ -3,7 +3,8 @@
 import { createClient } from '@/utils/supabase/server';
 import { getSession } from './auth';
 import { requireRole } from '@/utils/auth/requireRole';
-import { getDaysInMonthFromDateStr, getDailyRate } from '@/utils/payroll';
+import { hashPassword } from '@/utils/auth/password';
+import { getDaysInMonthFromDateStr, getDailyRate, getBangkokToday, bangkokDateTime } from '@/utils/payroll';
 import type {
   AuditLogPayload,
   Profile,
@@ -15,10 +16,20 @@ import type {
   StaffPayrollSummary,
 } from '@/types/db';
 
+/**
+ * Explicit profile column list that EXCLUDES `password`, so password hashes are
+ * never serialized to the client. Use this anywhere we'd otherwise `select('*')`
+ * on the profiles table.
+ */
+const PROFILE_COLUMNS =
+  'id, full_name, department, wage_type, rate, nationality, role, username, device_id, birthday, substitute_leave_quota, social_security_enabled, sso_type, sso_value, guarantee_target, guarantee_monthly, guarantee_accumulated, guarantee_status, created_at';
+
 export async function logAudit(action: string, adminId: string | null = null, tableName: string | null = null, recordId: string | null = null, oldValue: unknown = null, newValue: unknown = null, reason: string | null = null) {
-  const supabase = await createClient();
   const session = await getSession();
-  const performedBy = session ? session.name : (adminId || 'System');
+  if (!session) return; // only authenticated callers may write audit entries
+
+  const supabase = await createClient();
+  const performedBy = session.name;
 
   const entry: AuditLogPayload = {
     user_id: adminId,
@@ -38,7 +49,7 @@ export async function getStaffList() {
   const supabase = await createClient();
   const { data, error } = await supabase
     .from('profiles')
-    .select('*')
+    .select(PROFILE_COLUMNS)
     .order('created_at', { ascending: false });
 
   if (error) return { error: error.message };
@@ -49,7 +60,7 @@ export async function getStaffOnlyList() {
   const supabase = await createClient();
   const { data, error } = await supabase
     .from('profiles')
-    .select('*')
+    .select(PROFILE_COLUMNS)
     .eq('role', 'Staff')
     .order('created_at', { ascending: false });
 
@@ -61,7 +72,7 @@ export async function getAdminUsers() {
   const supabase = await createClient();
   const { data, error } = await supabase
     .from('profiles')
-    .select('*')
+    .select(PROFILE_COLUMNS)
     .in('role', ['Admin', 'Manager', 'HR'])
     .order('created_at', { ascending: false });
 
@@ -83,7 +94,7 @@ export async function upsertStaff(staff: StaffInput) {
     wage_type: staff.wage_type || 'Monthly',
     rate: staff.rate || 0,
     username: staff.username || null,
-    password: staff.password || null,
+    password: staff.password ? hashPassword(staff.password) : null,
     device_id: staff.device_id || null,
     birthday: staff.birthday || null,
     substitute_leave_quota: staff.substitute_leave_quota || 0,
@@ -123,6 +134,9 @@ export async function deleteStaff(id: string) {
 }
 
 export async function resetDeviceBinding(id: string) {
+  const auth = await requireRole(['Admin', 'Manager']);
+  if (!auth.authorized) return { error: auth.error };
+
   const supabase = await createClient();
   const { error } = await supabase.from('profiles').update({ device_id: null }).eq('id', id);
 
@@ -183,6 +197,9 @@ export async function updateSystemSettings(settings: Partial<SystemSettings>) {
 }
 
 export async function reassignDepartment(oldDept: string, newDept: string) {
+  const auth = await requireRole(['Admin', 'Manager']);
+  if (!auth.authorized) return { error: auth.error };
+
   const supabase = await createClient();
   const { error } = await supabase
     .from('profiles')
@@ -206,6 +223,8 @@ export async function getNetworkConfig() {
 }
 
 export async function batchUpsertSchedules(schedulesArray: ScheduleInput[]) {
+  const auth = await requireRole(['Admin', 'Manager']);
+  if (!auth.authorized) return { error: auth.error };
 
   const supabase = await createClient();
   if (schedulesArray.length === 0) return { success: true };
@@ -244,53 +263,83 @@ export async function getStaffShift(staffId: string, date: string) {
 }
 
 export async function insertManualAttendance(staffId: string, date: string, checkIn: string | null, checkOut: string | null, reason: string) {
-  const supabase = await createClient();
-  const isoIn = checkIn ? new Date(`${date}T${checkIn}`).toISOString() : null;
-  const isoOut = checkOut ? new Date(`${date}T${checkOut}`).toISOString() : null;
+  const auth = await requireRole(['Admin', 'Manager']);
+  if (!auth.authorized) return { error: auth.error };
 
-  let otStatus = 'None';
-  
-  if (checkOut) {
-    const { data: schedule } = await supabase.from('schedules').select('shift_end').eq('staff_id', staffId).eq('date', date).single();
-    const shiftEndStr = schedule?.shift_end || '17:00';
-    
-    // Convert to Date objects on the same day for safe comparison
-    const outDate = new Date(`${date}T${checkOut}`);
-    const shiftEndDate = new Date(`${date}T${shiftEndStr}`);
-    
-    const diffMins = (outDate.getTime() - shiftEndDate.getTime()) / 60000;
-    
-    const { data: settingsData } = await supabase.from('settings').select('value').eq('key', 'ot_config').single();
-    const threshold = settingsData?.value?.threshold_mins || 15;
+  try {
+    const supabase = await createClient();
+    // Interpret the entered wall-clock times as Asia/Bangkok, so the stored UTC
+    // timestamps are correct regardless of the host server timezone.
+    const isoIn = checkIn ? bangkokDateTime(date, checkIn).toISOString() : null;
+    const isoOut = checkOut ? bangkokDateTime(date, checkOut).toISOString() : null;
 
-    if (diffMins >= threshold) {
-      otStatus = 'Pending OT';
+    let otStatus = 'None';
+
+    if (checkOut) {
+      const { data: schedule } = await supabase.from('schedules').select('shift_start, shift_end').eq('staff_id', staffId).eq('date', date).single();
+      const shiftStartStr = schedule?.shift_start || '09:00';
+      const shiftEndStr = schedule?.shift_end || '17:00';
+
+      // Compare as absolute Bangkok times (host-timezone independent).
+      const shiftStartDate = bangkokDateTime(date, shiftStartStr);
+      let shiftEndDate = bangkokDateTime(date, shiftEndStr);
+      let outDate = bangkokDateTime(date, checkOut);
+
+      // Overnight shift (e.g. 22:00 -> 06:00): the shift end — and an
+      // early-morning checkout entered against the same date — belong to the
+      // NEXT day. Roll them past midnight so OT isn't wildly mis-computed.
+      if (shiftEndDate.getTime() <= shiftStartDate.getTime()) {
+        shiftEndDate = new Date(shiftEndDate.getTime() + 24 * 60 * 60 * 1000);
+        if (outDate.getTime() < shiftStartDate.getTime()) {
+          outDate = new Date(outDate.getTime() + 24 * 60 * 60 * 1000);
+        }
+      }
+
+      const diffMins = (outDate.getTime() - shiftEndDate.getTime()) / 60000;
+
+      const { data: settingsData } = await supabase.from('settings').select('value').eq('key', 'ot_config').single();
+      const threshold = settingsData?.value?.threshold_mins || 15;
+
+      if (diffMins >= threshold) {
+        otStatus = 'Pending OT';
+      }
     }
+
+    const { data, error } = await supabase.from('attendance').upsert({
+      staff_id: staffId, date: date, check_in: isoIn, check_out: isoOut, is_leave: false, ot_status: otStatus
+    }, {onConflict: 'staff_id, date'}).select().single();
+
+    if (error) return { error: error.message };
+    await logAudit('MANUAL_ATTENDANCE', null, 'attendance', data.id, null, data, reason);
+    return { success: true };
+  } catch (e) {
+    console.error('insertManualAttendance failed:', e);
+    return { error: 'ไม่สามารถบันทึกเวลาทำงานได้ กรุณาลองใหม่อีกครั้ง' };
   }
-
-  const { data, error } = await supabase.from('attendance').upsert({
-    staff_id: staffId, date: date, check_in: isoIn, check_out: isoOut, is_leave: false, ot_status: otStatus
-  }, {onConflict: 'staff_id, date'}).select().single();
-
-  if (error) return { error: error.message };
-  await logAudit('MANUAL_ATTENDANCE', null, 'attendance', data.id, null, data, reason);
-  return { success: true };
 }
 
 export async function insertLeave(staffId: string, date: string, type: string, reason: string, isPaid: boolean) {
-  const supabase = await createClient();
-  const { data, error } = await supabase.from('attendance').upsert({
-    staff_id: staffId, 
-    date: date, 
-    is_leave: true, 
-    leave_type: type,
-    leave_reason: reason,
-    is_paid_leave: isPaid
-  }, {onConflict: 'staff_id, date'}).select().single();
+  const auth = await requireRole(['Admin', 'Manager']);
+  if (!auth.authorized) return { error: auth.error };
 
-  if (error) return { error: error.message };
-  await logAudit('BOOK_LEAVE', null, 'attendance', data.id, null, data, `${type}: ${reason} (Paid: ${isPaid})`);
-  return { success: true };
+  try {
+    const supabase = await createClient();
+    const { data, error } = await supabase.from('attendance').upsert({
+      staff_id: staffId,
+      date: date,
+      is_leave: true,
+      leave_type: type,
+      leave_reason: reason,
+      is_paid_leave: isPaid
+    }, {onConflict: 'staff_id, date'}).select().single();
+
+    if (error) return { error: error.message };
+    await logAudit('BOOK_LEAVE', null, 'attendance', data.id, null, data, `${type}: ${reason} (Paid: ${isPaid})`);
+    return { success: true };
+  } catch (e) {
+    console.error('insertLeave failed:', e);
+    return { error: 'ไม่สามารถบันทึกการลาได้ กรุณาลองใหม่อีกครั้ง' };
+  }
 }
 
 export async function approveOT(recordId: string, mins: number) {
@@ -340,17 +389,25 @@ export async function getPendingDailyOT() {
   const { data: scheduleData } = await supabase.from('schedules').select('*').limit(5000);
 
   const pendingOTs = attendanceData.map(att => {
+    let shiftStartStr = '09:00:00'; // Default
     let shiftEndStr = '17:00:00'; // Default
     if (scheduleData) {
       const sched = scheduleData.find(s => s.staff_id === att.staff_id && s.date === att.date);
-      if (sched && sched.shift_end) {
-        shiftEndStr = sched.shift_end;
+      if (sched) {
+        if (sched.shift_start) shiftStartStr = sched.shift_start;
+        if (sched.shift_end) shiftEndStr = sched.shift_end;
       }
     }
 
+    // check_out is an absolute stored timestamp, so it never needs rolling; only
+    // the shift end (anchored to att.date) does for overnight shifts.
     const checkOutDate = new Date(att.check_out);
-    const shiftEndDate = new Date(`${att.date}T${shiftEndStr}`);
-    
+    const shiftStartDate = bangkokDateTime(att.date, shiftStartStr);
+    let shiftEndDate = bangkokDateTime(att.date, shiftEndStr);
+    if (shiftEndDate.getTime() <= shiftStartDate.getTime()) {
+      shiftEndDate = new Date(shiftEndDate.getTime() + 24 * 60 * 60 * 1000);
+    }
+
     const diffMins = (checkOutDate.getTime() - shiftEndDate.getTime()) / 60000;
     
     if (diffMins >= threshold) {
@@ -367,6 +424,9 @@ export async function getPendingDailyOT() {
 }
 
 export async function addPayrollAdjustment(staffId: string, cycleStartDate: string, type: string, amount: number, reason: string) {
+  const auth = await requireRole(['Admin', 'Manager']);
+  if (!auth.authorized) return { error: auth.error };
+
   const supabase = await createClient();
   const { data, error } = await supabase.from('payroll_adjustments').insert({
     staff_id: staffId, cycle_start_date: cycleStartDate, type, amount, reason
@@ -384,17 +444,25 @@ export async function getPublicHolidays() {
 }
 
 export async function upsertPublicHoliday(holiday: HolidayInput) {
+  const auth = await requireRole(['Admin', 'Manager']);
+  if (!auth.authorized) return { error: auth.error };
+
   const supabase = await createClient();
   const { data, error } = await supabase.from('public_holidays').upsert(holiday, { onConflict: 'date' }).select().single();
-  if (!error) await logAudit('UPSERT_HOLIDAY', null, 'public_holidays', data.id, null, data);
-  return { data, error };
+  if (error) return { error: error.message };
+  await logAudit('UPSERT_HOLIDAY', null, 'public_holidays', data.id, null, data);
+  return { data };
 }
 
 export async function deletePublicHoliday(id: string) {
+  const auth = await requireRole(['Admin', 'Manager']);
+  if (!auth.authorized) return { error: auth.error };
+
   const supabase = await createClient();
   const { error } = await supabase.from('public_holidays').delete().eq('id', id);
-  if (!error) await logAudit('DELETE_HOLIDAY', null, 'public_holidays', id);
-  return { error };
+  if (error) return { error: error.message };
+  await logAudit('DELETE_HOLIDAY', null, 'public_holidays', id);
+  return { success: true };
 }
 
 export async function getPendingHolidayRecords() {
@@ -411,35 +479,40 @@ export async function resolveHolidayReview(attendanceId: string, staffId: string
   const auth = await requireRole(['Admin', 'Manager']);
   if (!auth.authorized) return { error: auth.error };
 
-  const supabase = await createClient();
+  try {
+    const supabase = await createClient();
 
-  if (resolution === 'Paid') {
-    const [{ data: staff }, { data: record }] = await Promise.all([
-      supabase.from('profiles').select('rate').eq('id', staffId).single(),
-      supabase.from('attendance').select('date').eq('id', attendanceId).single()
-    ]);
-    // Daily wage uses the actual number of days in the holiday's month, not a flat /30.
-    const dailyWage = record?.date ? getDailyRate(staff?.rate || 0, record.date) : 0;
-    const amount = dailyWage * multiplier;
+    if (resolution === 'Paid') {
+      const [{ data: staff }, { data: record }] = await Promise.all([
+        supabase.from('profiles').select('rate').eq('id', staffId).single(),
+        supabase.from('attendance').select('date').eq('id', attendanceId).single()
+      ]);
+      // Daily wage uses the actual number of days in the holiday's month, not a flat /30.
+      const dailyWage = record?.date ? getDailyRate(staff?.rate || 0, record.date) : 0;
+      const amount = dailyWage * multiplier;
 
-    await supabase.from('attendance').update({
-      holiday_status: 'Paid',
-      holiday_multiplier: multiplier,
-      holiday_amount: amount
-    }).eq('id', attendanceId);
-  } else {
-    const { data: staff } = await supabase.from('profiles').select('substitute_leave_quota').eq('id', staffId).single();
-    await supabase.from('profiles').update({
-      substitute_leave_quota: (staff?.substitute_leave_quota || 0) + 1
-    }).eq('id', staffId);
-    
-    await supabase.from('attendance').update({
-      holiday_status: 'Substitute'
-    }).eq('id', attendanceId);
+      await supabase.from('attendance').update({
+        holiday_status: 'Paid',
+        holiday_multiplier: multiplier,
+        holiday_amount: amount
+      }).eq('id', attendanceId);
+    } else {
+      const { data: staff } = await supabase.from('profiles').select('substitute_leave_quota').eq('id', staffId).single();
+      await supabase.from('profiles').update({
+        substitute_leave_quota: (staff?.substitute_leave_quota || 0) + 1
+      }).eq('id', staffId);
+
+      await supabase.from('attendance').update({
+        holiday_status: 'Substitute'
+      }).eq('id', attendanceId);
+    }
+
+    await logAudit('RESOLVE_HOLIDAY', null, 'attendance', attendanceId, null, { resolution, multiplier });
+    return { success: true };
+  } catch (e) {
+    console.error('resolveHolidayReview failed:', e);
+    return { error: 'ไม่สามารถดำเนินการวันหยุดได้ กรุณาลองใหม่อีกครั้ง' };
   }
-  
-  await logAudit('RESOLVE_HOLIDAY', null, 'attendance', attendanceId, null, { resolution, multiplier });
-  return { success: true };
 }
 
 export async function getWarningLetters(staffId: string) {
@@ -455,6 +528,9 @@ export async function getLeaveHistory(staffId: string) {
 }
 
 export async function issueWarningLetter(warning: WarningLetterInput) {
+  const auth = await requireRole(['Admin', 'Manager']);
+  if (!auth.authorized) return { error: auth.error };
+
   const supabase = await createClient();
   const session = await getSession();
   const payload = { ...warning, issued_by: session?.id };
@@ -466,7 +542,7 @@ export async function issueWarningLetter(warning: WarningLetterInput) {
 export async function getOverviewStats() {
   const supabase = await createClient();
   const now = new Date();
-  const today = new Date(now.getTime() + 7 * 60 * 60 * 1000).toISOString().split('T')[0];
+  const today = getBangkokToday();
 
   const [
     { data: staffList },
@@ -481,7 +557,7 @@ export async function getOverviewStats() {
   ]);
 
   const staffIds = new Set(staffList?.map(s => s.id) || []);
-  const staffAttendance = attendanceToday?.filter(a => staffIds.has(a.user_id)) || [];
+  const staffAttendance = attendanceToday?.filter(a => staffIds.has(a.staff_id)) || [];
 
   const totalStaff = staffList?.length || 0;
   const present = staffAttendance.filter(a => a.check_in && !a.is_leave).length || 0;
@@ -512,7 +588,7 @@ export async function getMonthlySummary(startDate: string, endDate: string) {
   const daysInCycleMonth = getDaysInMonthFromDateStr(startDate);
 
   const [{ data: staffData }, { data: settingsData }] = await Promise.all([
-    supabase.from('profiles').select('*'),
+    supabase.from('profiles').select(PROFILE_COLUMNS),
     supabase.from('settings').select('*')
   ]);
 
@@ -621,7 +697,7 @@ export async function getMonthlySummary(startDate: string, endDate: string) {
 
     if (log.check_in) {
       const checkInTime = new Date(log.check_in);
-      const shiftStart = new Date(`${log.date}T${shiftStartStr}`);
+      const shiftStart = bangkokDateTime(log.date, shiftStartStr);
       const rawLateMins = (checkInTime.getTime() - shiftStart.getTime()) / 60000;
       
       // Apply grace period: only count as late if beyond grace threshold
@@ -676,6 +752,10 @@ export async function getMonthlySummary(startDate: string, endDate: string) {
     let manualDeductions = 0;
     staff.adjustments.forEach((adj) => {
       if (adj.type === 'Add-on' || adj.type === 'Bonus') additions += Number(adj.amount);
+      // 'Guarantee Deposit' rows are written by finalizeGuaranteeDeduction purely
+      // as an audit trail; the deduction itself is already handled by the dynamic
+      // guarantee calculation below, so skip it here to avoid double-counting.
+      else if (adj.type === 'Guarantee Deposit') { /* audit record only — not a second deduction */ }
       else manualDeductions += Number(adj.amount);
     });
 
@@ -721,21 +801,26 @@ export async function finalizeGuaranteeDeduction(staffId: string, amount: number
   const auth = await requireRole(['Admin', 'Manager']);
   if (!auth.authorized) return { error: auth.error };
 
-  const supabase = await createClient();
+  try {
+    const supabase = await createClient();
 
-  // Atomic at the database level: the RPC increments `guarantee_accumulated`
-  // AND records the matching 'Guarantee Deposit' adjustment inside a single
-  // transaction. This eliminates the read-modify-write race condition the old
-  // application-level implementation had (two concurrent finalizations could
-  // both read the same starting balance and lose one increment).
-  // The 'Guarantee Deposit' type keeps it out of `otherDeductions` so the
-  // monthly summary's dynamic guarantee calculation is not double-counted.
-  const { error } = await supabase.rpc('finalize_guarantee_deduction', {
-    p_staff_id: staffId,
-    p_amount: amount,
-    p_cycle_start_date: cycleStartDate,
-  });
+    // Atomic at the database level: the RPC increments `guarantee_accumulated`
+    // AND records the matching 'Guarantee Deposit' adjustment inside a single
+    // transaction. This eliminates the read-modify-write race condition the old
+    // application-level implementation had (two concurrent finalizations could
+    // both read the same starting balance and lose one increment).
+    // The 'Guarantee Deposit' type keeps it out of `otherDeductions` so the
+    // monthly summary's dynamic guarantee calculation is not double-counted.
+    const { error } = await supabase.rpc('finalize_guarantee_deduction', {
+      p_staff_id: staffId,
+      p_amount: amount,
+      p_cycle_start_date: cycleStartDate,
+    });
 
-  if (error) return { error: error.message };
-  return { success: true };
+    if (error) return { error: error.message };
+    return { success: true };
+  } catch (e) {
+    console.error('finalizeGuaranteeDeduction failed:', e);
+    return { error: 'ไม่สามารถบันทึกเงินประกันได้ กรุณาลองใหม่อีกครั้ง' };
+  }
 }

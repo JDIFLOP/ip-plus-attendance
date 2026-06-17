@@ -47,3 +47,26 @@
 - `InAppBrowserBlocker.tsx` and `admin/qr/page.tsx` hard-code Thai strings instead of using `I18nContext` (violates the i18n rule; centralize when convenient).
 - The 11 deferred `react-hooks` lint items.
 - Broader `any` typing in other client pages was addressed; remaining ones (if any surface) can reuse `@/types/db`.
+
+## 2026-06-16 — Clean Code & Future-Proofing pass
+
+### Zero-hardcoding
+- Centralized the remaining hardcoded Thai strings from `InAppBrowserBlocker.tsx` and `admin/qr/page.tsx` into `I18nContext.tsx` (new keys: `browserNotSupported`, `browserOpenInstruction`, `howToFix`, `browserStep1`, `browserStep2`, `copyLinkAlert`, `copyLink`, `loading`, in en/th/mm).
+- Moved the break-glass admin credential out of source: `auth.ts` now reads `ADMIN_BOOTSTRAP_USERNAME` / `ADMIN_BOOTSTRAP_PASSWORD` / `ADMIN_BOOTSTRAP_ID` from env (added to `.env.local`; disabled automatically if unset). No more hardcoded `floppa`/`jjjj1111`/`admin-floppa-id`.
+- Centralized the public IP-lookup endpoint into `src/config/app.ts` (`IP_LOOKUP_URL`, env-overridable via `NEXT_PUBLIC_IP_LOOKUP_URL`); replaced the 3 hardcoded `api.ipify.org` usages.
+
+### Timezone (UTC+7) defensive coding
+- New helpers in `src/utils/payroll.ts`: `getBangkokToday()` and `bangkokDateTime(date, time)` (explicit `+07:00`, host-timezone independent).
+- Replaced the manual `+ 7h` "today" math in `admin.ts` (`getOverviewStats`) and `attendance.ts` (×2) with `getBangkokToday()`.
+- Fixed the core off-by-7h risk on UTC hosts (Vercel): manual-attendance storage + all shift-time comparisons (`insertManualAttendance`, `getPendingDailyOT`, `getMonthlySummary`) now interpret wall-clock shift/clock times as Bangkok via `bangkokDateTime(...)`. (No data migration needed — timestamps created on a Bangkok-tz dev host were already correct UTC.)
+- Added explicit `timeZone: 'Asia/Bangkok'` to client-side timestamp renders in `admin/page.tsx` and `overview/page.tsx`.
+
+### Error handling / graceful degradation
+- Added `src/app/error.tsx` — a self-contained Thai route error boundary (no white screens; offers retry).
+- Wrapped critical mutation Server Actions in try/catch returning localized Thai errors: `insertManualAttendance`, `insertLeave`, `resolveHolidayReview`, `finalizeGuaranteeDeduction`.
+
+### Verification
+- `npx tsc --noEmit` → 0 errors; `npm run build` → passes; `npm run lint` → 11 problems, all the same pre-existing deferred hooks (10 `immutability` + 1 `exhaustive-deps`). No new safe-category issues.
+
+### New env vars to set in production
+`ADMIN_BOOTSTRAP_USERNAME`, `ADMIN_BOOTSTRAP_PASSWORD`, `ADMIN_BOOTSTRAP_ID` (optional break-glass admin); `NEXT_PUBLIC_IP_LOOKUP_URL` (optional override).

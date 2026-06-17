@@ -332,10 +332,10 @@ export default function AdminDashboard() {
                             }
                           </td>
                           <td className="px-4 py-4 text-primary/80 font-mono text-sm">
-                            {log.is_leave ? '--' : (log.check_in ? new Date(log.check_in).toLocaleTimeString() : '--:--')}
+                            {log.is_leave ? '--' : (log.check_in ? new Date(log.check_in).toLocaleTimeString('th-TH', { timeZone: 'Asia/Bangkok', hour: '2-digit', minute: '2-digit' }) : '--:--')}
                           </td>
                           <td className="px-4 py-4 text-primary/80 font-mono text-sm">
-                            {log.is_leave ? '--' : (log.check_out ? new Date(log.check_out).toLocaleTimeString() : '--:--')}
+                            {log.is_leave ? '--' : (log.check_out ? new Date(log.check_out).toLocaleTimeString('th-TH', { timeZone: 'Asia/Bangkok', hour: '2-digit', minute: '2-digit' }) : '--:--')}
                           </td>
                           <td className="px-4 py-4">
                             {log.ot_status === 'Approved' ? (
@@ -363,7 +363,7 @@ export default function AdminDashboard() {
                     <tbody className="divide-y divide-black/5 border-y border-black/5">
                       {selectedStaff.adjustments.map((adj) => (
                         <tr key={adj.id} className="hover:bg-primary/5">
-                          <td className="px-4 py-3 text-sm text-primary w-32">{new Date(adj.created_at).toLocaleDateString()}</td>
+                          <td className="px-4 py-3 text-sm text-primary w-32">{new Date(adj.created_at).toLocaleDateString('th-TH', { timeZone: 'Asia/Bangkok' })}</td>
                           <td className="px-4 py-3">
                             <span className={`text-xs font-bold px-2 py-1 rounded-md uppercase tracking-wider ${
                               adj.type === 'Bonus' || adj.type === 'Add-on' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'

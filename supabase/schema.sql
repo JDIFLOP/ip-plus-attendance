@@ -14,7 +14,7 @@ CREATE TABLE settings (
 
 -- Insert dummy data for Pattaya coordinates as requested
 INSERT INTO settings (key, value) VALUES 
-('villa_location', '{"lat": 12.9235, "lng": 100.8824, "radius_m": 1}'::jsonb),
+('villa_location', '{"lat": 12.9235, "lng": 100.8824, "radius_m": 100}'::jsonb),
 ('ot_config', '{"threshold_mins": 15}'::jsonb),
 ('payroll_config', '{"start_day": 25, "break_duration_mins": 60}'::jsonb),
 ('wifi_config', '{"allowed_ip": "", "ssid_hint": "Villa WiFi"}'::jsonb);
@@ -198,3 +198,25 @@ BEGIN
   RETURN v_new_accumulated;
 END;
 $$ LANGUAGE plpgsql;
+
+-- ===========================================================================
+-- Row-Level Security (RLS)
+-- ===========================================================================
+-- All database access goes through trusted Server Actions that use the
+-- service_role key (which has BYPASSRLS). Enabling RLS with NO policies makes
+-- every table deny-by-default for the public `anon` / `authenticated` roles, so
+-- the publishable anon key can no longer read or write the DB directly from the
+-- browser. Run this block once in the Supabase SQL editor.
+
+ALTER TABLE profiles            ENABLE ROW LEVEL SECURITY;
+ALTER TABLE settings            ENABLE ROW LEVEL SECURITY;
+ALTER TABLE schedules           ENABLE ROW LEVEL SECURITY;
+ALTER TABLE attendance          ENABLE ROW LEVEL SECURITY;
+ALTER TABLE audit_logs          ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public_holidays     ENABLE ROW LEVEL SECURITY;
+ALTER TABLE warning_letters     ENABLE ROW LEVEL SECURITY;
+ALTER TABLE payroll_adjustments ENABLE ROW LEVEL SECURITY;
+
+-- Defense-in-depth: explicitly revoke direct table access from the public API
+-- roles. (RLS already blocks them; this also hides them from PostgREST.)
+REVOKE ALL ON ALL TABLES IN SCHEMA public FROM anon, authenticated;

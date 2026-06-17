@@ -204,7 +204,7 @@ export default function OverviewDashboard() {
                   {overview?.nextHoliday && (
                     <div className="bg-white/80 backdrop-blur-sm p-3 rounded-xl border border-red-200 inline-block">
                       <div className="text-sm font-black text-red-900 font-mono">
-                        {new Date(overview.nextHoliday.date).toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' })}
+                        {new Date(overview.nextHoliday.date).toLocaleDateString('th-TH', { timeZone: 'Asia/Bangkok', day: 'numeric', month: 'long', year: 'numeric' })}
                       </div>
                     </div>
                   )}
@@ -222,7 +222,7 @@ export default function OverviewDashboard() {
                     overview.upcomingBirthdays.map((s, i) => (
                       <div key={i} className="flex items-center justify-between bg-white/50 p-2 rounded-lg border border-blue-100">
                         <span className="font-bold text-sm text-blue-900">{s.full_name}</span>
-                        <span className="text-[10px] font-black text-blue-400 font-mono">{new Date(s.birthday).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}</span>
+                        <span className="text-[10px] font-black text-blue-400 font-mono">{new Date(s.birthday).toLocaleDateString('th-TH', { timeZone: 'Asia/Bangkok', day: 'numeric', month: 'short' })}</span>
                       </div>
                     ))
                   ) : (

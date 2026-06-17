@@ -239,6 +239,15 @@ const translations = {
     netPay: 'Net Pay',
     others: 'Others',
     guarantee: 'Guarantee',
+    // Browser block / QR / misc
+    browserNotSupported: 'Browser Not Supported',
+    browserOpenInstruction: 'For stable and accurate location detection, please open this system in Google Chrome or Safari only.',
+    howToFix: 'How to Fix',
+    browserStep1: 'Tap the menu ( ⋮ ) in the top-right corner of the screen.',
+    browserStep2: 'Select "Open in External Browser" or "Open in Browser".',
+    copyLinkAlert: 'Link copied! Please paste it into Google Chrome or Safari.',
+    copyLink: 'Copy Link',
+    loading: 'Loading...',
   },
   th: {
     qrTitle: 'QR สแกนเข้างาน',
@@ -466,6 +475,15 @@ const translations = {
     netPay: 'รายรับสุทธิ',
     others: 'อื่นๆ',
     guarantee: 'เงินประกัน',
+    // Browser block / QR / misc
+    browserNotSupported: 'เบราว์เซอร์ไม่รองรับ',
+    browserOpenInstruction: 'เพื่อความเสถียรและแม่นยำในการระบุตำแหน่ง กรุณาเปิดระบบนี้ผ่าน Google Chrome หรือ Safari เท่านั้น',
+    howToFix: 'วิธีแก้ไข',
+    browserStep1: 'แตะที่เมนูจุดสามจุด ( ⋮ ) มุมบนขวาของหน้าจอ',
+    browserStep2: 'เลือก "เปิดในเบราว์เซอร์อื่น" หรือ "Open in Browser"',
+    copyLinkAlert: 'คัดลอกลิงก์แล้ว! กรุณานำไปวางใน Google Chrome หรือ Safari',
+    copyLink: 'คัดลอกลิงก์',
+    loading: 'กำลังโหลด...',
   },
   mm: {
     qrTitle: 'QR စကန်ဖတ်',
@@ -693,6 +711,15 @@ const translations = {
     netPay: 'ထုတ်ပေးလစာ',
     others: 'အခြား',
     guarantee: 'အာမခံငွေ',
+    // Browser block / QR / misc
+    browserNotSupported: 'ဘရောက်ဆာ မပံ့ပိုးပါ',
+    browserOpenInstruction: 'တည်နေရာ တိကျစွာဖော်ပြနိုင်ရန် ဤစနစ်ကို Google Chrome သို့မဟုတ် Safari ဖြင့်သာ ဖွင့်ပါ။',
+    howToFix: 'ဖြေရှင်းနည်း',
+    browserStep1: 'မျက်နှာပြင် ညာဘက်အပေါ်ထောင့်ရှိ မီနူး ( ⋮ ) ကို နှိပ်ပါ။',
+    browserStep2: '"အခြားဘရောက်ဆာတွင်ဖွင့်ရန်" သို့မဟုတ် "Open in Browser" ကို ရွေးပါ။',
+    copyLinkAlert: 'လင့်ခ်ကူးယူပြီး! Google Chrome သို့မဟုတ် Safari တွင် ကူးထည့်ပါ။',
+    copyLink: 'လင့်ခ်ကူးယူ',
+    loading: 'ဖွင့်နေသည်...',
   }
 };
 

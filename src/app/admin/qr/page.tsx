@@ -2,8 +2,10 @@
 
 import { useEffect, useState } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
+import { useI18n } from '@/context/I18nContext';
 
 export default function StaticQRPage() {
+  const { t } = useI18n();
   const [isMounted, setIsMounted] = useState(false);
 
   useEffect(() => {
@@ -27,7 +29,7 @@ export default function StaticQRPage() {
           />
         ) : (
           <div className="w-[380px] h-[380px] bg-gray-100 animate-pulse rounded-xl flex items-center justify-center text-gray-400 font-bold tracking-widest uppercase">
-            Loading...
+            {t.loading}
           </div>
         )}
       </div>

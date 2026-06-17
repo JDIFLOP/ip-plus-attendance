@@ -5,6 +5,7 @@ import { getSystemSettings, updateSystemSettings, getPublicHolidays, upsertPubli
 import { Save, MapPin, Clock, Loader2, CheckCircle, Calculator, Wifi, BadgeDollarSign, Calendar, Plus, Trash2, Pencil } from 'lucide-react';
 import { useI18n } from '@/context/I18nContext';
 import HolidayCalendar, { type Holiday } from '@/components/admin/HolidayCalendar';
+import { IP_LOOKUP_URL } from '@/config/app';
 
 interface VillaLocation { lat: number; lng: number; radius_m: number; }
 interface OtConfig { threshold_mins: number; }
@@ -33,7 +34,7 @@ export default function SettingsManagement() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [settings, setSettings] = useState<SystemSettings>({
-    villa_location: { lat: 12.9235, lng: 100.8824, radius_m: 1 },
+    villa_location: { lat: 12.9235, lng: 100.8824, radius_m: 100 },
     ot_config: { threshold_mins: 15 },
     payroll_config: { start_day: 25, end_day: 24, break_duration_mins: 60 },
     wifi_config: { allowed_ip: '', ssid_hint: 'IP PLUS WiFi' },
@@ -362,12 +363,12 @@ export default function SettingsManagement() {
                 holidays={holidays}
                 onAddHoliday={async (holiday) => {
                   const res = await upsertPublicHoliday(holiday);
-                  if (res.error) alert(`Error saving holiday: ${res.error.message}`);
+                  if (res.error) alert(`Error saving holiday: ${res.error}`);
                   await loadHolidays();
                 }}
                 onDeleteHoliday={async (id) => {
                   const res = await deletePublicHoliday(id);
-                  if (res.error) alert(`Error deleting holiday: ${res.error.message}`);
+                  if (res.error) alert(`Error deleting holiday: ${res.error}`);
                   await loadHolidays();
                 }}
               />
@@ -541,7 +542,7 @@ export default function SettingsManagement() {
                     type="button"
                     className="ml-3 text-blue-600 underline font-bold"
                     onClick={async () => {
-                      const r = await fetch('https://api.ipify.org?format=json');
+                      const r = await fetch(IP_LOOKUP_URL);
                       const d = await r.json();
                       const el = document.getElementById('admin-ip-display');
                       if (el) el.textContent = d.ip;

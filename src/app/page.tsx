@@ -6,6 +6,7 @@ import { LanguageToggle } from '@/components/ui/LanguageToggle';
 import { useI18n } from '@/context/I18nContext';
 import { processAttendance, checkDeviceStatus } from '@/app/actions/attendance';
 import { getNetworkConfig } from '@/app/actions/admin';
+import { IP_LOOKUP_URL } from '@/config/app';
 import { MapPin, Clock, XCircle, Wifi, WifiOff, Loader2, LogOut, CheckCircle2 } from 'lucide-react';
 import { logout } from '@/app/actions/auth';
 import { useRouter } from 'next/navigation';
@@ -65,7 +66,7 @@ export default function Home() {
     if (!requiredIp) { setNetworkStatus('allowed'); return; }
     setNetworkStatus('checking');
     try {
-      const res = await fetch('https://api.ipify.org?format=json', { cache: 'no-store' });
+      const res = await fetch(IP_LOOKUP_URL, { cache: 'no-store' });
       const { ip } = await res.json();
       setCurrentIp(ip);
       if (ip === requiredIp) {

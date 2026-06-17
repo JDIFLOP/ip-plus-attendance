@@ -38,3 +38,27 @@ export function getDailyRate(monthlyRate: number, dateStr: string): number {
   const days = getDaysInMonthFromDateStr(dateStr);
   return days > 0 ? monthlyRate / days : 0;
 }
+
+const BANGKOK_TZ = 'Asia/Bangkok';
+/** Fixed UTC+7 offset for Asia/Bangkok (no DST), used to anchor wall-clock times. */
+const BANGKOK_OFFSET = '+07:00';
+
+/**
+ * Today's date in Asia/Bangkok as `YYYY-MM-DD`, independent of the host server's
+ * timezone (Vercel runs in UTC). Use this instead of `new Date().toISOString()`
+ * or manual `+ 7h` offset math.
+ */
+export function getBangkokToday(): string {
+  return new Date().toLocaleDateString('en-CA', { timeZone: BANGKOK_TZ });
+}
+
+/**
+ * Build an absolute `Date` from a Bangkok wall-clock `YYYY-MM-DD` + `HH:mm[:ss]`
+ * pair. The `+07:00` offset is explicit, so the result is correct regardless of
+ * the host server's timezone (prevents off-by-7h payroll/attendance bugs on
+ * UTC cloud hosts). Returns an invalid Date for malformed input.
+ */
+export function bangkokDateTime(dateStr: string, timeStr: string): Date {
+  const time = /^\d{2}:\d{2}$/.test(timeStr) ? `${timeStr}:00` : timeStr;
+  return new Date(`${dateStr}T${time}${BANGKOK_OFFSET}`);
+}

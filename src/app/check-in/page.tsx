@@ -6,6 +6,8 @@ import { LanguageToggle } from '@/components/ui/LanguageToggle';
 import { useI18n } from '@/context/I18nContext';
 import { processAttendance, checkDeviceStatus } from '@/app/actions/attendance';
 import { getNetworkConfig } from '@/app/actions/admin';
+import { getAuthRole } from '@/app/actions/auth';
+import { IP_LOOKUP_URL } from '@/config/app';
 import { MapPin, CheckCircle2, Clock, XCircle, Wifi, WifiOff, Loader2 } from 'lucide-react';
 
 type CheckinStatus = 'loading' | 'unregistered' | 'pending_in' | 'pending_out' | 'completed';
@@ -22,6 +24,26 @@ export default function CheckInPage() {
   const [allowedIp, setAllowedIp] = useState<string>('');
   const [currentIp, setCurrentIp] = useState<string>('');
   const [ssidHint, setSsidHint] = useState<string>('IP PLUS WiFi');
+  const [isManagement, setIsManagement] = useState(false);
+
+  const verifyNetwork = useCallback(async (requiredIp: string) => {
+    if (!requiredIp) { setNetworkStatus('allowed'); return; }
+    setNetworkStatus('checking');
+    try {
+      const res = await fetch(IP_LOOKUP_URL, { cache: 'no-store' });
+      const { ip } = await res.json();
+      setCurrentIp(ip);
+      if (ip === requiredIp) {
+        setNetworkStatus('allowed');
+        setMessage(null);
+      } else {
+        setNetworkStatus('blocked');
+      }
+    } catch {
+      // If ipify is unreachable (e.g. on a private network), consider allowed
+      setNetworkStatus('allowed');
+    }
+  }, []);
 
   // Load config and device on mount
   useEffect(() => {
@@ -42,42 +64,60 @@ export default function CheckInPage() {
       setStatus(res.status as CheckinStatus);
     });
 
-    // Load allowed IP from settings
-    getNetworkConfig().then((cfg) => {
-      const configuredIp = cfg.allowed_ip?.trim();
-      setAllowedIp(configuredIp || '');
-      setSsidHint(cfg.ssid_hint || 'IP PLUS WiFi');
-      
-      // If no IP configured, network check is bypassed (Always allowed)
-      if (!configuredIp) {
+    // Determine the actor. Management (Admin/Manager/HR) bypasses the GPS and
+    // network gates server-side, so we skip those client checks entirely.
+    getAuthRole().then((role) => {
+      const mgmt = !!role && ['Admin', 'Manager', 'HR'].includes(role);
+      setIsManagement(mgmt);
+      if (mgmt) {
         setNetworkStatus('allowed');
-      } else {
-        verifyNetwork(configuredIp);
+        return;
       }
+
+      // Staff only: load allowed IP from settings and verify the network.
+      getNetworkConfig().then((cfg) => {
+        const configuredIp = cfg.allowed_ip?.trim();
+        setAllowedIp(configuredIp || '');
+        setSsidHint(cfg.ssid_hint || 'IP PLUS WiFi');
+
+        // If no IP configured, network check is bypassed (Always allowed)
+        if (!configuredIp) {
+          setNetworkStatus('allowed');
+        } else {
+          verifyNetwork(configuredIp);
+        }
+      });
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const verifyNetwork = useCallback(async (requiredIp: string) => {
-    if (!requiredIp) { setNetworkStatus('allowed'); return; }
-    setNetworkStatus('checking');
-    try {
-      const res = await fetch('https://api.ipify.org?format=json', { cache: 'no-store' });
-      const { ip } = await res.json();
-      setCurrentIp(ip);
-      if (ip === requiredIp) {
-        setNetworkStatus('allowed');
-        setMessage(null);
-      } else {
-        setNetworkStatus('blocked');
-      }
-    } catch {
-      // If ipify is unreachable (e.g. on a private network), consider allowed
-      setNetworkStatus('allowed');
+  const submitAttendance = async (lat: number, lng: number) => {
+    const res = await processAttendance(deviceId!, lat, lng);
+
+    if (res.error) {
+      let errorText = res.error;
+      if (res.error.startsWith('distanceError:')) errorText = t.distanceError;
+      if (res.error.startsWith('cooldownError:')) errorText = t.cooldownError;
+      setMessage({ type: 'error', text: errorText });
+    } else {
+      const actionLabel = res.type === 'check_out' ? t.checkOut : t.checkIn;
+      setMessage({ type: 'success', text: `${t.success}: ${actionLabel} — ${res.name}` });
+      const nextStatus = await checkDeviceStatus(deviceId!);
+      setStatus(nextStatus.status as CheckinStatus);
     }
-  }, []);
+    setLoading(false);
+  };
 
   const handleAttendance = () => {
+    // Management bypasses GPS + device + network server-side, so skip the
+    // browser geolocation prompt entirely and submit with placeholder coords.
+    if (isManagement) {
+      setLoading(true);
+      setMessage({ type: 'info', text: t.checkingLocation });
+      submitAttendance(0, 0);
+      return;
+    }
+
     if (networkStatus === 'blocked') {
       setMessage({ type: 'error', text: t.wifiError });
       return;
@@ -96,20 +136,7 @@ export default function CheckInPage() {
     navigator.geolocation.getCurrentPosition(
       async (position) => {
         const { latitude, longitude } = position.coords;
-        const res = await processAttendance(deviceId!, latitude, longitude);
-
-        if (res.error) {
-          let errorText = res.error;
-          if (res.error.startsWith('distanceError:')) errorText = t.distanceError;
-          if (res.error.startsWith('cooldownError:')) errorText = t.cooldownError;
-          setMessage({ type: 'error', text: errorText });
-        } else {
-          const actionLabel = res.type === 'check_out' ? t.checkOut : t.checkIn;
-          setMessage({ type: 'success', text: `${t.success}: ${actionLabel} — ${res.name}` });
-          const nextStatus = await checkDeviceStatus(deviceId!);
-          setStatus(nextStatus.status as CheckinStatus);
-        }
-        setLoading(false);
+        await submitAttendance(latitude, longitude);
       },
       () => {
         setMessage({ type: 'error', text: t.locationError + '\n' + t.allowLocationGuide });
@@ -119,8 +146,8 @@ export default function CheckInPage() {
     );
   };
 
-  const isNetworkBlocked = networkStatus === 'blocked';
-  const isButtonDisabled = loading || isNetworkBlocked || networkStatus === 'checking';
+  const isNetworkBlocked = !isManagement && networkStatus === 'blocked';
+  const isButtonDisabled = loading || isNetworkBlocked || (!isManagement && networkStatus === 'checking');
 
   return (
     <div className="min-h-[100dvh] bg-background flex flex-col">

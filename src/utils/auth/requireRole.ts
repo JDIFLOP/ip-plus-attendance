@@ -17,6 +17,12 @@ import { getSession } from '@/app/actions/auth';
 
 export type AppRole = 'Admin' | 'Manager' | 'HR' | 'Staff';
 
+/**
+ * Roles treated as "management" for attendance purposes: they may clock in/out
+ * from any device and location (GPS + device-binding checks are bypassed).
+ */
+export const MANAGEMENT_ROLES: AppRole[] = ['Admin', 'Manager', 'HR'];
+
 export interface Session {
   id: string;
   name: string;
