@@ -46,6 +46,9 @@ export async function logAudit(action: string, adminId: string | null = null, ta
 }
 
 export async function getStaffList() {
+  const auth = await requireRole(['Admin', 'Manager', 'HR']);
+  if (!auth.authorized) return { error: auth.error };
+
   const supabase = await createClient();
   const { data, error } = await supabase
     .from('profiles')
@@ -57,6 +60,9 @@ export async function getStaffList() {
 }
 
 export async function getStaffOnlyList() {
+  const auth = await requireRole(['Admin', 'Manager', 'HR']);
+  if (!auth.authorized) return { error: auth.error };
+
   const supabase = await createClient();
   const { data, error } = await supabase
     .from('profiles')
@@ -69,6 +75,9 @@ export async function getStaffOnlyList() {
 }
 
 export async function getAdminUsers() {
+  const auth = await requireRole(['Admin', 'Manager', 'HR']);
+  if (!auth.authorized) return { error: auth.error };
+
   const supabase = await createClient();
   const { data, error } = await supabase
     .from('profiles')
@@ -540,6 +549,9 @@ export async function issueWarningLetter(warning: WarningLetterInput) {
 }
 
 export async function getOverviewStats() {
+  const auth = await requireRole(['Admin', 'Manager', 'HR']);
+  if (!auth.authorized) return { error: auth.error };
+
   const supabase = await createClient();
   const now = new Date();
   const today = getBangkokToday();
@@ -581,6 +593,9 @@ export async function getOverviewStats() {
 }
 
 export async function getMonthlySummary(startDate: string, endDate: string) {
+  const auth = await requireRole(['Admin', 'Manager', 'HR']);
+  if (!auth.authorized) return { error: auth.error };
+
   const supabase = await createClient();
 
   // Daily-wage and unpaid-leave math divides the monthly base by the actual

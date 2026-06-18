@@ -36,7 +36,7 @@ export default function OverviewDashboard() {
   const fetchData = async () => {
     setLoading(true);
     const statsRes = await getOverviewStats();
-    if (statsRes) {
+    if (statsRes && !('error' in statsRes)) {
       setOverview(statsRes);
       await fetchDepartmentStats(statsRes);
     }
