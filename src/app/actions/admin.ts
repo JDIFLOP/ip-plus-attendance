@@ -4,7 +4,7 @@ import { createClient } from '@/utils/supabase/server';
 import { getSession } from './auth';
 import { requireRole } from '@/utils/auth/requireRole';
 import { hashPassword } from '@/utils/auth/password';
-import { getDaysInMonthFromDateStr, getDailyRate, getBangkokToday, bangkokDateTime } from '@/utils/payroll';
+import { getDaysInMonthFromDateStr, getDailyRate, getBangkokToday, bangkokDateTime, computeLateness } from '@/utils/payroll';
 import type {
   AuditLogPayload,
   Profile,
@@ -699,39 +699,51 @@ export async function getMonthlySummary(startDate: string, endDate: string) {
 
     summaryMap[log.staff_id].otApproved += (log.approved_ot_mins || 0) / 60; 
     
-    let shiftStartStr = '09:00:00';
+    // Dynamic shift target: use the scheduled start when one exists, otherwise
+    // leave it undefined so computeLateness infers the nearest-hour target.
+    let scheduledStart: string | undefined;
     let noBreak = false;
-    
+
     if (scheduleData) {
       const s = scheduleData.find(x => x.staff_id === log.staff_id && x.date === log.date);
       if (s) {
-         if (s.shift_start) shiftStartStr = s.shift_start;
+         if (s.shift_start) scheduledStart = s.shift_start;
          if (s.no_break) noBreak = s.no_break;
       }
     }
 
     if (log.check_in) {
       const checkInTime = new Date(log.check_in);
-      const shiftStart = bangkokDateTime(log.date, shiftStartStr);
-      const rawLateMins = (checkInTime.getTime() - shiftStart.getTime()) / 60000;
-      
-      // Apply grace period: only count as late if beyond grace threshold
-      const effectiveLateMins = rawLateMins > lateGraceMins ? Math.floor(rawLateMins) : 0;
-      const earlyMins = rawLateMins < 0 ? Math.abs(Math.floor(rawLateMins)) : 0;
+      const { targetStart, lateMins, isLate } = computeLateness(checkInTime, log.date, {
+        scheduledStart,
+        graceMins: lateGraceMins,
+      });
 
-      summaryMap[log.staff_id].lateMins += effectiveLateMins;
+      // Excused lateness waives the penalty: only accumulate late minutes when
+      // the record is genuinely late (beyond grace) AND not excused by a manager.
+      if (isLate && !log.is_excused) {
+        summaryMap[log.staff_id].lateMins += lateMins;
+      }
+
+      // Early arrivals snap to target, so they earn no early credit (info only).
+      const earlyMins = checkInTime.getTime() < targetStart.getTime()
+        ? Math.floor((targetStart.getTime() - checkInTime.getTime()) / 60000)
+        : 0;
       summaryMap[log.staff_id].earlyMins += earlyMins;
-      
+
       if (log.check_out) {
         summaryMap[log.staff_id].workedDays += 1;
         const checkOutTime = new Date(log.check_out);
-        let shiftMins = (checkOutTime.getTime() - checkInTime.getTime()) / 60000;
-        
+        // Snap the paid start to the target: early check-ins are paid from the
+        // target (not earlier), late check-ins from when they actually started.
+        const effectiveStart = Math.max(checkInTime.getTime(), targetStart.getTime());
+        let shiftMins = (checkOutTime.getTime() - effectiveStart) / 60000;
+
         // Deduct standard break if worked over 4 hours and noBreak isn't toggled
         if (!noBreak && shiftMins > 240) {
             shiftMins -= breakDurationMins;
         }
-        
+
         summaryMap[log.staff_id].totalHoursWorked += Math.max(0, shiftMins / 60);
       }
     }

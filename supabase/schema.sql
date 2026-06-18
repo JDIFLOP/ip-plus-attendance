@@ -72,8 +72,14 @@ CREATE TABLE attendance (
   holiday_status VARCHAR DEFAULT 'None', -- 'None', 'Pending', 'Paid', 'Substitute'
   holiday_multiplier NUMERIC DEFAULT 1.0,
   holiday_amount NUMERIC DEFAULT 0,
+  -- Manager override for dynamic-shift lateness: when true, the late penalty is
+  -- waived during payroll (รับทราบเหตุผลแล้ว / excused lateness).
+  is_excused BOOLEAN DEFAULT false,
   UNIQUE(staff_id, date)
 );
+
+-- Migration for existing deployments (idempotent): add the excused-lateness flag.
+ALTER TABLE attendance ADD COLUMN IF NOT EXISTS is_excused BOOLEAN DEFAULT false;
 
 -- audit_logs
 CREATE TABLE audit_logs (

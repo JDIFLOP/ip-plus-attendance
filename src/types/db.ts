@@ -157,6 +157,8 @@ export interface AttendanceRecord {
   holiday_status: string;
   holiday_multiplier: number;
   holiday_amount: number;
+  /** Manager override: when true, dynamic-shift lateness penalty is waived. */
+  is_excused?: boolean;
 }
 
 /** Per-staff aggregate built by `getMonthlySummary`. */

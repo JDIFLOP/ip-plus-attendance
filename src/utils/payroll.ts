@@ -62,3 +62,61 @@ export function bangkokDateTime(dateStr: string, timeStr: string): Date {
   const time = /^\d{2}:\d{2}$/.test(timeStr) ? `${timeStr}:00` : timeStr;
   return new Date(`${dateStr}T${time}${BANGKOK_OFFSET}`);
 }
+
+/**
+ * Infer a dynamic "target start" by rounding a check-in to the NEAREST hour.
+ *
+ * Pool-villa shifts are highly variable (6/7 AM, 2 PM, …) and frequently have no
+ * pre-scheduled target, so we snap the actual check-in to the closest logical
+ * hour: 07:45 → 08:00, 08:10 → 08:00, 06:50 → 07:00, 14:35 → 15:00.
+ *
+ * The hour/minute are read in Asia/Bangkok (not the host TZ) so a cloud server
+ * running in UTC infers the same target a Thailand user expects. The result is
+ * anchored to Bangkok midnight + whole hours, so a 23:30+ check-in that rounds
+ * to 24:00 rolls correctly into the next day. Returns an absolute Date.
+ */
+export function inferTargetStart(checkIn: Date, dateStr: string): Date {
+  const hhmm = checkIn.toLocaleTimeString('en-GB', {
+    timeZone: BANGKOK_TZ,
+    hour12: false,
+    hour: '2-digit',
+    minute: '2-digit',
+  }); // e.g. "07:45"
+  const [h, m] = hhmm.split(':').map(Number);
+  const targetHour = m >= 30 ? h + 1 : h; // nearest hour (may be 24 → next midnight)
+  const midnight = bangkokDateTime(dateStr, '00:00');
+  return new Date(midnight.getTime() + targetHour * 3600 * 1000);
+}
+
+export interface Lateness {
+  /** Absolute target start used for the comparison. */
+  targetStart: Date;
+  /** Whole minutes after target (0 when early or on-time — early snaps to target). */
+  lateMins: number;
+  /** True only when the minutes late strictly exceed the grace period. */
+  isLate: boolean;
+}
+
+/**
+ * Determine lateness for a check-in against a dynamic shift target.
+ *
+ * Target precedence: an explicit scheduled start (`HH:mm[:ss]`) wins; otherwise
+ * the nearest-hour target is inferred from the check-in. Early check-ins snap to
+ * the target (`lateMins` = 0). `isLate` is true only when the minutes late
+ * exceed `graceMins` (defaults to 0).
+ */
+export function computeLateness(
+  checkIn: Date,
+  dateStr: string,
+  opts: { scheduledStart?: string | null; graceMins?: number },
+): Lateness {
+  const targetStart =
+    opts.scheduledStart && opts.scheduledStart.trim()
+      ? bangkokDateTime(dateStr, opts.scheduledStart)
+      : inferTargetStart(checkIn, dateStr);
+
+  const rawMins = (checkIn.getTime() - targetStart.getTime()) / 60000;
+  const lateMins = rawMins > 0 ? Math.floor(rawMins) : 0; // early check-ins snap to 0
+  const grace = Math.max(0, opts.graceMins ?? 0);
+  return { targetStart, lateMins, isLate: lateMins > grace };
+}

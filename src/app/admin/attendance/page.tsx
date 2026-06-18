@@ -2,7 +2,8 @@
 
 import { useState, useEffect } from 'react';
 import { getStaffList, insertManualAttendance, insertLeave, getPendingDailyOT, approveOT, rejectOT, getStaffShift } from '@/app/actions/admin';
-import { CheckCircle, Clock, Check, X, RefreshCw, Lock } from 'lucide-react';
+import { getDailyAttendanceReview, setAttendanceExcused, type DailyAttendanceReviewRow } from '@/app/actions/payroll';
+import { CheckCircle, Clock, Check, X, RefreshCw, Lock, ShieldCheck, AlarmClock, Loader2 } from 'lucide-react';
 import { useI18n } from '@/context/I18nContext';
 import { getAuthRole } from '@/app/actions/auth';
 
@@ -23,11 +24,17 @@ export default function AttendanceManager() {
   const [loading, setLoading] = useState(true);
   const [staff, setStaff] = useState<Staff[]>([]);
   const [selectedStaffId, setSelectedStaffId] = useState('');
-  const [activeTab, setActiveTab] = useState<'editor' | 'ot'>('editor');
+  const [activeTab, setActiveTab] = useState<'editor' | 'ot' | 'late'>('editor');
   const [pendingOT, setPendingOT] = useState<PendingOTRecord[]>([]);
   const [loadingOT, setLoadingOT] = useState(false);
   const [processingId, setProcessingId] = useState<string | null>(null);
   const [userRole, setUserRole] = useState<string | null>(null);
+
+  // Late Review (dynamic shift)
+  const [reviewDate, setReviewDate] = useState('');
+  const [reviewRows, setReviewRows] = useState<DailyAttendanceReviewRow[]>([]);
+  const [loadingReview, setLoadingReview] = useState(false);
+  const [togglingId, setTogglingId] = useState<string | null>(null);
 
   const [mode, setMode] = useState<'attendance' | 'leave'>('attendance');
   const [targetDate, setTargetDate] = useState('');
@@ -51,8 +58,10 @@ export default function AttendanceManager() {
     loadData();
     getAuthRole().then(r => setUserRole(r));
     const today = new Date().toISOString().split('T')[0];
-    // eslint-disable-next-line react-hooks/set-state-in-effect
+    /* eslint-disable react-hooks/set-state-in-effect */
     setTargetDate(today);
+    setReviewDate(today);
+    /* eslint-enable react-hooks/set-state-in-effect */
   }, []);
 
   const loadData = async () => {
@@ -104,6 +113,33 @@ export default function AttendanceManager() {
       loadPendingOT();
     }
   }, [activeTab]);
+
+  const loadReview = async (date: string) => {
+    setLoadingReview(true);
+    const res = await getDailyAttendanceReview(date);
+    setReviewRows(res.data || []);
+    setLoadingReview(false);
+  };
+
+  useEffect(() => {
+    if (activeTab === 'late' && reviewDate) loadReview(reviewDate);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, reviewDate]);
+
+  const handleToggleExcused = async (row: DailyAttendanceReviewRow) => {
+    setTogglingId(row.id);
+    const res = await setAttendanceExcused(row.id, !row.isExcused);
+    if (res.error) {
+      alert(res.error);
+    } else {
+      setReviewRows(prev => prev.map(r => (r.id === row.id ? { ...r, isExcused: !r.isExcused } : r)));
+      showToast(row.isExcused ? t.undoExcuse : t.excusedBadge);
+    }
+    setTogglingId(null);
+  };
+
+  const fmtBkkTime = (iso: string | null) =>
+    iso ? new Date(iso).toLocaleTimeString('th-TH', { timeZone: 'Asia/Bangkok', hour: '2-digit', minute: '2-digit' }) : '--:--';
 
   const showToast = (msg: string) => {
     setToast({ message: msg, visible: true });
@@ -175,7 +211,7 @@ export default function AttendanceManager() {
           >
             Logs Editor
           </button>
-          <button 
+          <button
             onClick={() => setActiveTab('ot')}
             className={`px-6 py-2.5 rounded-lg text-sm font-bold uppercase tracking-widest transition-all ${activeTab === 'ot' ? 'bg-white text-primary shadow-sm' : 'text-primary/50 hover:text-primary'}`}
           >
@@ -183,6 +219,12 @@ export default function AttendanceManager() {
             {pendingOT.length > 0 && activeTab !== 'ot' && (
               <span className="ml-2 bg-red-500 text-white text-[10px] px-1.5 py-0.5 rounded-full">{pendingOT.length}</span>
             )}
+          </button>
+          <button
+            onClick={() => setActiveTab('late')}
+            className={`px-6 py-2.5 rounded-lg text-sm font-bold uppercase tracking-widest transition-all ${activeTab === 'late' ? 'bg-white text-primary shadow-sm' : 'text-primary/50 hover:text-primary'}`}
+          >
+            {t.lateReviewTab}
           </button>
         </div>
       </div>
@@ -313,7 +355,7 @@ export default function AttendanceManager() {
             </form>
           </div>
         </div>
-      ) : (
+      ) : activeTab === 'ot' ? (
         <div className="bg-white border border-black/5 rounded-2xl shadow-xl overflow-hidden min-h-[400px] flex flex-col">
           <div className="h-1 bg-primary w-full"></div>
           <div className="p-6 flex justify-between items-center border-b border-black/5">
@@ -406,6 +448,120 @@ export default function AttendanceManager() {
                   </div>
                 </div>
               ))}
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="bg-white border border-black/5 rounded-2xl shadow-xl overflow-hidden min-h-[400px] flex flex-col">
+          <div className="h-1 bg-primary w-full"></div>
+          <div className="p-6 flex flex-col md:flex-row md:justify-between md:items-center gap-4 border-b border-black/5">
+            <div>
+              <h3 className="text-xl font-extrabold text-primary flex items-center gap-2">
+                <AlarmClock className="w-5 h-5 text-gold" /> {t.lateReviewTitle}
+              </h3>
+              <p className="text-primary/50 text-xs font-medium mt-1 max-w-xl">{t.lateReviewSub}</p>
+            </div>
+            <div className="flex items-center gap-2">
+              <input
+                type="date"
+                value={reviewDate}
+                onChange={e => setReviewDate(e.target.value)}
+                className="px-3 py-2 rounded-lg border-2 border-primary/10 focus:border-primary outline-none bg-[#f8f9f8] font-mono text-primary font-bold text-sm"
+              />
+              <button onClick={() => loadReview(reviewDate)} className="p-2.5 bg-black/5 rounded-lg hover:bg-black/10 transition-colors" title="Refresh">
+                <RefreshCw className={`w-4 h-4 text-primary/60 ${loadingReview ? 'animate-spin' : ''}`} />
+              </button>
+            </div>
+          </div>
+
+          {loadingReview ? (
+            <div className="flex-1 flex flex-col items-center justify-center text-primary/50 py-20">
+              <RefreshCw className="w-8 h-8 animate-spin mb-4" />
+              <p className="font-bold uppercase tracking-widest text-xs">กำลังโหลดข้อมูล...</p>
+            </div>
+          ) : reviewRows.length === 0 ? (
+            <div className="flex-1 flex flex-col items-center justify-center text-primary/30 py-20">
+              <CheckCircle className="w-12 h-12 mb-4" />
+              <p className="font-bold text-lg">{t.noLateRecords}</p>
+            </div>
+          ) : (
+            <div className="overflow-auto">
+              <table className="w-full text-left border-collapse min-w-max">
+                <thead className="bg-[#f0f4f0] text-primary text-xs uppercase tracking-widest border-b-2 border-primary/10">
+                  <tr>
+                    <th className="px-6 py-4 font-bold">{t.staffName}</th>
+                    <th className="px-4 py-4 font-bold text-center">{t.colActualIn}</th>
+                    <th className="px-4 py-4 font-bold text-center">{t.colTarget}</th>
+                    <th className="px-4 py-4 font-bold text-center">{t.colLate}</th>
+                    <th className="px-4 py-4 font-bold text-center">{t.colStatus}</th>
+                    <th className="px-4 py-4 font-bold text-right">{t.actions}</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-black/5">
+                  {reviewRows.map(row => {
+                    const noCheckIn = !row.checkIn && !row.isLeave;
+                    return (
+                      <tr key={row.id} className="even:bg-black/[0.015] hover:bg-primary/5 transition-colors">
+                        <td className="px-6 py-4">
+                          <span className="font-bold text-primary block">{row.staffName}</span>
+                          <span className="text-[10px] uppercase tracking-widest font-bold text-primary/40">{row.department}</span>
+                        </td>
+                        <td className="px-4 py-4 text-center font-mono text-sm font-bold text-primary">
+                          {row.isLeave ? '—' : fmtBkkTime(row.checkIn)}
+                        </td>
+                        <td className="px-4 py-4 text-center font-mono text-sm text-primary/60">
+                          {row.isLeave || noCheckIn ? '—' : row.targetStart}
+                        </td>
+                        <td className="px-4 py-4 text-center">
+                          {row.isLate ? (
+                            <span className="font-mono font-extrabold text-sm text-red-600">{row.lateMins}</span>
+                          ) : (
+                            <span className="text-primary/30">—</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-4 text-center">
+                          {row.isLeave ? (
+                            <span className="bg-blue-100 text-blue-700 text-[10px] font-bold px-2.5 py-1 rounded-md uppercase tracking-wider ring-1 ring-inset ring-blue-200">{t.statusLeave}</span>
+                          ) : noCheckIn ? (
+                            <span className="bg-black/5 text-primary/40 text-[10px] font-bold px-2.5 py-1 rounded-md uppercase tracking-wider">{t.statusNoCheckIn}</span>
+                          ) : row.isExcused ? (
+                            <span className="inline-flex items-center gap-1 bg-green-100 text-green-700 text-[10px] font-bold px-2.5 py-1 rounded-md uppercase tracking-wider ring-1 ring-inset ring-green-200"><ShieldCheck className="w-3 h-3" /> {t.excusedBadge}</span>
+                          ) : row.isLate ? (
+                            <span className="bg-red-100 text-red-700 text-[10px] font-bold px-2.5 py-1 rounded-md uppercase tracking-wider ring-1 ring-inset ring-red-200">{t.statusLate}</span>
+                          ) : (
+                            <span className="bg-green-50 text-green-600 text-[10px] font-bold px-2.5 py-1 rounded-md uppercase tracking-wider ring-1 ring-inset ring-green-100">{t.statusOnTime}</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-4 text-right">
+                          {(row.isLate || row.isExcused) && !row.isLeave ? (
+                            userRole === 'HR' ? (
+                              <span className="inline-flex items-center gap-1 text-primary/30 text-xs font-bold" title="ไม่มีสิทธิ์"><Lock className="w-3.5 h-3.5" /></span>
+                            ) : (
+                              <button
+                                onClick={() => handleToggleExcused(row)}
+                                disabled={togglingId === row.id}
+                                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wide transition-colors border disabled:opacity-40 ${row.isExcused
+                                  ? 'bg-white text-primary/60 border-black/10 hover:bg-black/5'
+                                  : 'bg-green-500 text-white border-green-500 hover:bg-green-600'}`}
+                              >
+                                {togglingId === row.id ? (
+                                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                ) : row.isExcused ? (
+                                  <>{t.undoExcuse}</>
+                                ) : (
+                                  <><ShieldCheck className="w-3.5 h-3.5" /> {t.markExcused}</>
+                                )}
+                              </button>
+                            )
+                          ) : (
+                            <span className="text-primary/20">—</span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
           )}
         </div>
