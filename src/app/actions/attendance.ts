@@ -76,6 +76,55 @@ function parseVillaLocation(value: unknown): Geofence | null {
   return { lat, lng, radius };
 }
 
+/** Resolved server Supabase client type (service-role). */
+type ServerSupabase = Awaited<ReturnType<typeof createClient>>;
+
+/**
+ * Enforce the staff GPS geofence. Returns an `{ error }` object to hand back to
+ * the client when the location check fails, or `null` when the staff member is
+ * within the authorized radius.
+ *
+ * This is called ONLY on the check-in path. Check-out is intentionally
+ * location-free (see `processAttendance`).
+ */
+async function enforceStaffGeofence(
+  supabase: ServerSupabase,
+  lat: number,
+  lng: number,
+): Promise<{ error: string } | null> {
+  const { data: settingsData, error: settingsError } = await supabase
+    .from('settings')
+    .select('value')
+    .eq('key', 'villa_location')
+    .single();
+
+  if (settingsError || !settingsData) {
+    const detail = logDbError('villa_location load', settingsError);
+    return { error: `Failed to load location settings${detail}` };
+  }
+
+  const geo = parseVillaLocation(settingsData.value);
+  if (!geo) {
+    // Misconfigured geofence: fail SAFE (block) with a clear message rather than
+    // silently allowing check-ins from anywhere.
+    console.error(
+      '[attendance] villa_location is empty or malformed:',
+      JSON.stringify(settingsData.value),
+    );
+    return { error: 'Location settings are not configured. Please contact admin.' };
+  }
+
+  const distance = haversineDistance(lat, lng, geo.lat, geo.lng);
+  if (!Number.isFinite(distance)) {
+    console.error('[attendance] invalid device coordinates:', JSON.stringify({ lat, lng, geo }));
+    return { error: 'Invalid location coordinates. Please retry.' };
+  }
+  if (distance > geo.radius) {
+    return { error: `distanceError: You are ${Math.round(distance)}m away (max ${geo.radius}m).` };
+  }
+  return null;
+}
+
 /**
  * Clock-in / clock-out.
  *
@@ -86,8 +135,15 @@ function parseVillaLocation(value: unknown): Geofence | null {
  *    location — the GPS geofence and device-binding checks are intentionally
  *    bypassed. (Trade-off: management attendance carries no location/device
  *    proof. This is a deliberate, owner-approved relaxation.)
- *  - Staff: no login. Identified strictly by their bound `device_id`, and the
- *    GPS geofence is enforced.
+ *  - Staff: no login. Identified strictly by their bound `device_id`.
+ *
+ * ASYMMETRIC location rules for staff:
+ *  - CHECK-IN  is STRICT: the GPS geofence is enforced here (and the allowed
+ *    Wi-Fi/public-IP is enforced client-side before this action is called).
+ *  - CHECK-OUT is RELAXED: NO geofence and NO IP gate, so staff can clock out
+ *    from any network and any location (running an errand at end of shift, or
+ *    forgetting to log out until they've left the property). Identity is still
+ *    proven by the bound device.
  *
  * All DB access uses the service-role server client (BYPASSRLS). Each query's
  * error is logged explicitly so a rejected mutation is never reduced to an
@@ -118,39 +174,9 @@ export async function processAttendance(deviceId: string, lat: number, lng: numb
       staffId = profile.id;
       fullName = profile.full_name;
     } else {
-      // Staff path: enforce the GPS geofence first.
-      const { data: settingsData, error: settingsError } = await supabase
-        .from('settings')
-        .select('value')
-        .eq('key', 'villa_location')
-        .single();
-
-      if (settingsError || !settingsData) {
-        const detail = logDbError('villa_location load', settingsError);
-        return { error: `Failed to load location settings${detail}` };
-      }
-
-      const geo = parseVillaLocation(settingsData.value);
-      if (!geo) {
-        // Misconfigured geofence: fail SAFE (block) with a clear message rather
-        // than silently allowing check-ins from anywhere.
-        console.error(
-          '[attendance] villa_location is empty or malformed:',
-          JSON.stringify(settingsData.value),
-        );
-        return { error: 'Location settings are not configured. Please contact admin.' };
-      }
-
-      const distance = haversineDistance(lat, lng, geo.lat, geo.lng);
-      if (!Number.isFinite(distance)) {
-        console.error('[attendance] invalid device coordinates:', JSON.stringify({ lat, lng, geo }));
-        return { error: 'Invalid location coordinates. Please retry.' };
-      }
-      if (distance > geo.radius) {
-        return { error: `distanceError: You are ${Math.round(distance)}m away (max ${geo.radius}m).` };
-      }
-
-      // Identify the staff member strictly by their bound device.
+      // Identify the staff member strictly by their bound device. The GPS
+      // geofence is NOT checked here — it's enforced later, and only on the
+      // check-in branch, so that check-out can be location-free.
       const { data: profile, error: profileError } = await supabase
         .from('profiles')
         .select('id, full_name')
@@ -201,7 +227,15 @@ export async function processAttendance(deviceId: string, lat: number, lng: numb
       return { success: true, type: 'check_out', name: fullName };
     }
 
-    // First action of the day -> check-in. Flag public holidays for review.
+    // First action of the day -> CHECK-IN (strict).
+    // Enforce the geofence for staff only; management is location-exempt. The
+    // check-out branch above never reaches here, so it stays location-free.
+    if (!isManagement) {
+      const geoError = await enforceStaffGeofence(supabase, lat, lng);
+      if (geoError) return geoError;
+    }
+
+    // Flag public holidays for review.
     const { data: holiday, error: holidayError } = await supabase
       .from('public_holidays')
       .select('name')

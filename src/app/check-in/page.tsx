@@ -118,6 +118,18 @@ export default function CheckInPage() {
       return;
     }
 
+    // CHECK-OUT (staff): relaxed — no Wi-Fi/IP gate and no geolocation. Staff
+    // may clock out from any network or location (an errand at the end of the
+    // shift, or forgetting to log out until they've left the property). The
+    // server skips the geofence for check-out too; coords are not stored on
+    // check-out, so we submit placeholder values.
+    if (status === 'pending_out') {
+      setLoading(true);
+      setMessage({ type: 'info', text: t.saving });
+      submitAttendance(0, 0);
+      return;
+    }
+
     if (networkStatus === 'blocked') {
       setMessage({ type: 'error', text: t.wifiError });
       return;
@@ -146,8 +158,12 @@ export default function CheckInPage() {
     );
   };
 
-  const isNetworkBlocked = !isManagement && networkStatus === 'blocked';
-  const isButtonDisabled = loading || isNetworkBlocked || (!isManagement && networkStatus === 'checking');
+  // Network gating applies to staff CHECK-IN only; check-out is never blocked by
+  // the Wi-Fi/IP state (asymmetric rule — see handleAttendance).
+  const isCheckOut = status === 'pending_out';
+  const enforceNetwork = !isManagement && !isCheckOut;
+  const isNetworkBlocked = enforceNetwork && networkStatus === 'blocked';
+  const isButtonDisabled = loading || isNetworkBlocked || (enforceNetwork && networkStatus === 'checking');
 
   return (
     <div className="min-h-[100dvh] bg-background flex flex-col">
@@ -162,8 +178,8 @@ export default function CheckInPage() {
         <h1 className="text-3xl font-bold text-primary mb-2 tracking-tight">{t.staffAttendance}</h1>
         <p className="text-black/50 mb-6 text-sm">Device ID: <span className="font-mono text-xs">{deviceId?.split('-')[0]}***</span></p>
 
-        {/* Network Status Banner */}
-        {allowedIp && (
+        {/* Network Status Banner — only relevant for check-in; check-out is network-free. */}
+        {allowedIp && status === 'pending_in' && (
           <div className={`w-full mb-6 rounded-xl px-4 py-3 flex items-center gap-3 text-sm font-medium transition-all ${networkStatus === 'allowed' ? 'bg-success/10 text-success border border-success/20' :
             networkStatus === 'blocked' ? 'bg-error/10 text-error border border-error/20 animate-pulse' :
               'bg-black/5 text-black/50 border border-black/10'
