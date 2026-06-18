@@ -5,6 +5,7 @@ import { getStaffOnlyList, upsertStaff, deleteStaff, resetDeviceBinding, getWarn
 import { UserPlus, Pencil, Trash2, Smartphone, Loader2, Info, AlertTriangle, Plane } from 'lucide-react';
 import type { AttendanceRecord } from '@/types/db';
 import { useI18n } from '@/context/I18nContext';
+import { ExportExcelButton } from '@/components/admin/ExportExcelButton';
 
 type Staff = {
   id: string;
@@ -148,6 +149,22 @@ export default function StaffManagement() {
     if (!res.error) loadStaff();
   };
 
+  const handleExportStaff = async () => {
+    const { exportStaffDirectory } = await import('@/utils/excelExport');
+    await exportStaffDirectory({
+      rows: staff.map((s) => ({
+        full_name: s.full_name,
+        department: s.department,
+        role: s.role,
+        nationality: s.nationality,
+        wage_type: s.wage_type,
+        rate: s.rate,
+        device_id: s.device_id,
+        substitute_leave_quota: s.substitute_leave_quota,
+      })),
+    });
+  };
+
   return (
     <>
       <div className="flex flex-wrap justify-between items-center bg-white p-6 rounded-2xl shadow-sm border border-black/5 mb-8 gap-4 sticky top-0 z-10">
@@ -156,12 +173,21 @@ export default function StaffManagement() {
           <p className="text-primary/60 text-sm font-medium mt-1">{t.manageStaffSub}</p>
         </div>
 
-        <button 
-          onClick={openNewStaffModal}
-          className="flex items-center gap-2 bg-primary hover:bg-primary-light focus:ring-4 focus:ring-primary/20 transition-all text-white px-6 py-3 rounded-xl text-sm font-bold uppercase tracking-wider shadow-lg shadow-primary/20 hover:shadow-primary/40 active:scale-[0.98]"
-        >
-          <UserPlus className="w-5 h-5" /> {t.addStaff}
-        </button>
+        <div className="flex items-center gap-3">
+          <ExportExcelButton
+            variant="outline"
+            label={t.exportStaffList}
+            loadingLabel={t.exporting}
+            disabled={loading || staff.length === 0}
+            onExport={handleExportStaff}
+          />
+          <button
+            onClick={openNewStaffModal}
+            className="flex items-center gap-2 bg-primary hover:bg-primary-light focus:ring-4 focus:ring-primary/20 transition-all text-white px-6 py-3 rounded-xl text-sm font-bold uppercase tracking-wider shadow-lg shadow-primary/20 hover:shadow-primary/40 active:scale-[0.98]"
+          >
+            <UserPlus className="w-5 h-5" /> {t.addStaff}
+          </button>
+        </div>
       </div>
 
       <div className="bg-white border border-black/5 rounded-2xl shadow-xl overflow-hidden flex-1 relative min-h-[400px]">
@@ -189,7 +215,7 @@ export default function StaffManagement() {
               </thead>
               <tbody className="divide-y divide-primary/5">
                 {staff.map((s) => (
-                  <tr key={s.id} className="hover:bg-primary/5 transition-colors group">
+                  <tr key={s.id} className="even:bg-black/[0.015] hover:bg-primary/5 transition-colors group">
                     <td className="px-6 py-4 font-bold text-primary flex items-center gap-2">
                       {s.full_name}
                       {s.warning_count && s.warning_count > 0 ? (

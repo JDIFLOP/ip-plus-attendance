@@ -1,9 +1,10 @@
 "use client";
 
 import { useState, useEffect, useCallback } from 'react';
-import { Calendar, Download, X, Plus, CheckCircle2 } from 'lucide-react';
+import { Calendar, Download, X, Plus, CheckCircle2, FileSpreadsheet } from 'lucide-react';
 import { getMonthlySummary, approveOT, addPayrollAdjustment, finalizeGuaranteeDeduction } from '@/app/actions/admin';
 import { useI18n } from '@/context/I18nContext';
+import { ExportExcelButton } from '@/components/admin/ExportExcelButton';
 import type { PayrollAdjustment, AttendanceRecord } from '@/types/db';
 
 type AdjType = 'Cash Advance' | 'Damage/Fine' | 'Bonus' | 'Add-on' | 'Deduction';
@@ -13,6 +14,7 @@ type StaffSummary = {
   name: string;
   role: string;
   department?: string;
+  wageType?: string;
   lateMins: number;
   earlyMins: number;
   otApproved: number;
@@ -119,6 +121,55 @@ export default function AdminDashboard() {
     document.body.removeChild(link);
   };
 
+  const handleExportPayroll = async () => {
+    const { exportPayrollSummary } = await import('@/utils/excelExport');
+    await exportPayrollSummary({
+      rows: staffData.map((s) => ({
+        name: s.name,
+        department: s.department,
+        wageType: s.wageType,
+        lateMins: s.lateMins,
+        otApproved: s.otApproved,
+        leaveDays: s.leaveDays,
+        workedDays: s.workedDays,
+        grossPay: s.grossPay,
+        ssoDeduction: s.ssoDeduction,
+        guaranteeDeduction: s.guaranteeDeduction,
+        otherDeductions: s.otherDeductions,
+        netPay: s.netPay,
+      })),
+      startDate,
+      endDate,
+    });
+  };
+
+  const handleExportDailyAttendance = async (staff: StaffSummary) => {
+    const fmtTime = (iso: string | null) =>
+      iso ? new Date(iso).toLocaleTimeString('th-TH', { timeZone: 'Asia/Bangkok', hour: '2-digit', minute: '2-digit' }) : '--:--';
+    const rows = [...staff.logs]
+      .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
+      .map((log) => ({
+        date: log.date,
+        type: log.is_leave ? log.leave_type || 'ลา' : 'กะงาน',
+        checkIn: log.is_leave ? '-' : fmtTime(log.check_in),
+        checkOut: log.is_leave ? '-' : fmtTime(log.check_out),
+        ot:
+          log.ot_status === 'Approved'
+            ? `${log.approved_ot_mins} นาที`
+            : log.ot_status === 'Pending OT'
+              ? 'รออนุมัติ'
+              : '-',
+        note: log.is_leave ? log.leave_reason || '' : '',
+      }));
+    const { exportDailyAttendance } = await import('@/utils/excelExport');
+    await exportDailyAttendance({
+      rows,
+      title: `รายงานการลงเวลา — ${staff.name}`,
+      subtitle: `รอบ ${startDate} ถึง ${endDate}`,
+      filename: `การลงเวลา_${staff.name}`,
+    });
+  };
+
   const handleOTApprove = async (recordId: string, currentMins: number) => {
     const minStr = prompt(`Approve OT minutes (current raw: ~${currentMins} mins):`, String(currentMins));
     if (!minStr) return;
@@ -159,9 +210,18 @@ export default function AdminDashboard() {
             <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="text-sm outline-none text-primary font-bold bg-transparent" />
           </div>
         </div>
-        <button onClick={handleExportCSV} className="flex items-center gap-2 bg-primary hover:bg-primary-light transition-all text-white px-6 py-3 rounded-xl text-sm font-bold uppercase tracking-wider shadow-lg shadow-primary/20 active:scale-[0.98]">
-          <Download className="w-4 h-4" /> {t.exportCsv}
-        </button>
+        <div className="flex items-center gap-2">
+          <button onClick={handleExportCSV} className="flex items-center gap-2 bg-white text-primary border border-primary/20 hover:bg-primary/5 transition-all px-4 py-3 rounded-xl text-sm font-bold uppercase tracking-wider shadow-sm active:scale-[0.98]">
+            <Download className="w-4 h-4" /> {t.exportCsv}
+          </button>
+          <ExportExcelButton
+            variant="gold"
+            label={t.exportPayroll}
+            loadingLabel={t.exporting}
+            disabled={staffData.length === 0}
+            onExport={handleExportPayroll}
+          />
+        </div>
       </div>
 
       {/* Table */}
@@ -190,7 +250,7 @@ export default function AdminDashboard() {
               </thead>
               <tbody className="divide-y divide-primary/5">
                 {staffData.map((staff) => (
-                  <tr key={staff.id} className="hover:bg-[#f8f9f8] transition-colors group">
+                  <tr key={staff.id} className="even:bg-black/[0.015] hover:bg-[#eef3ee] transition-colors group">
                     <td className="px-6 py-4">
                       <div className="flex items-center gap-3">
                         <div className="w-10 h-10 rounded-full bg-primary text-white font-bold flex items-center justify-center shrink-0 border-2 border-gold/50 shadow-sm uppercase group-hover:scale-105 transition-transform">
@@ -296,6 +356,13 @@ export default function AdminDashboard() {
                     className="bg-white/20 hover:bg-white/40 text-white text-[10px] uppercase font-bold tracking-widest px-3 py-1 rounded-full transition-colors border border-white/30 flex items-center gap-1"
                   >
                     <Plus className="w-3 h-3" /> {t.addAdjustment}
+                  </button>
+                  <button
+                    onClick={() => handleExportDailyAttendance(selectedStaff)}
+                    disabled={selectedStaff.logs.length === 0}
+                    className="bg-gold/90 hover:bg-gold text-primary text-[10px] uppercase font-bold tracking-widest px-3 py-1 rounded-full transition-colors border border-gold flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    <FileSpreadsheet className="w-3 h-3" /> {t.exportAttendance}
                   </button>
                 </div>
               </div>

@@ -1,9 +1,10 @@
 "use client";
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { getStaffList, fetchMonthSchedules, batchUpsertSchedules } from '@/app/actions/admin';
+import { getStaffList, fetchMonthSchedules, batchUpsertSchedules, getPublicHolidays } from '@/app/actions/admin';
 import { CheckCircle, Copy, ClipboardPaste, Save, Loader2, ChevronDown } from 'lucide-react';
 import { useI18n } from '@/context/I18nContext';
+import { ExportExcelButton } from '@/components/admin/ExportExcelButton';
 import type { ScheduleInput } from '@/types/db';
 
 type Staff = { id: string; full_name: string; role: string; department: string; };
@@ -202,6 +203,16 @@ export default function SchedulesManagement() {
     else showToast(t.allSaved);
   };
 
+  const handleExportRoster = async () => {
+    // Pull public holidays so the exported roster can tint those columns red.
+    const holRes = await getPublicHolidays();
+    const holidays = (holRes.data || [])
+      .map((h: { date: string }) => h.date)
+      .filter((d: string) => days.includes(d));
+    const { exportScheduleRoster } = await import('@/utils/excelExport');
+    await exportScheduleRoster({ staff, days, schedules, yearMonth, holidays });
+  };
+
   const toggleDept = (dept: string) => {
     const next = new Set(collapsedDepts);
     if (next.has(dept)) next.delete(dept);
@@ -262,13 +273,22 @@ export default function SchedulesManagement() {
           </button>
         </div>
 
-        <button 
-          onClick={handleSaveMonth}
-          disabled={saving}
-          className="flex items-center gap-2 bg-gold text-primary hover:bg-gold/80 transition-all px-6 py-3 rounded-xl font-black uppercase tracking-wider shadow-lg active:scale-95 disabled:opacity-50 z-50"
-        >
-          {saving ? <Loader2 className="w-5 h-5 animate-spin" /> : <Save className="w-5 h-5" />} {t.saveGrid}
-        </button>
+        <div className="flex items-center gap-3">
+          <ExportExcelButton
+            variant="outline"
+            label={t.exportRoster}
+            loadingLabel={t.exporting}
+            disabled={loading || staff.length === 0 || days.length === 0}
+            onExport={handleExportRoster}
+          />
+          <button
+            onClick={handleSaveMonth}
+            disabled={saving}
+            className="flex items-center gap-2 bg-gold text-primary hover:bg-gold/80 transition-all px-6 py-3 rounded-xl font-black uppercase tracking-wider shadow-lg active:scale-95 disabled:opacity-50 z-50"
+          >
+            {saving ? <Loader2 className="w-5 h-5 animate-spin" /> : <Save className="w-5 h-5" />} {t.saveGrid}
+          </button>
+        </div>
       </div>
 
       {/* Grid */}
