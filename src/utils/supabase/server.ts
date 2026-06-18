@@ -40,5 +40,17 @@ export async function createClient() {
         }
       },
     },
+    // This app does NOT use Supabase Auth — sessions are our own HMAC cookie
+    // (see actions/auth.ts). Disable session handling and pin the Authorization
+    // header to the service-role key so the SSR client can never downgrade to a
+    // user/anon JWT (which RLS would then reject). Guarantees BYPASSRLS.
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+      detectSessionInUrl: false,
+    },
+    global: {
+      headers: { Authorization: `Bearer ${serviceRoleKey}` },
+    },
   })
 }
